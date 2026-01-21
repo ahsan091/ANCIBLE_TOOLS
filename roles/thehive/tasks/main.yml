@@ -152,14 +152,6 @@
   changed_when: true
   failed_when: false
 
-- name: Remove port 9000 mapping from TheHive base docker-compose.yml
-  ansible.builtin.replace:
-    path: "{{ thehive_profile_dir }}/docker-compose.yml"
-    regexp: '^\s+-\s+['\''"]0\.0\.0\.0:9000:9000['\''"]\s*$'
-    replace: '# Port 9000 removed by Ansible to avoid conflict with OpenCTI MinIO'
-  when: thehive_profile_dir is defined
-  ignore_errors: true
-
 - name: Deploy TheHive stack
   community.docker.docker_compose_v2:
     project_src: "{{ thehive_profile_dir }}"

@@ -66,14 +66,6 @@
     group: root
     mode: '0644'
 
-- name: Remove hardcoded port 9200 from Wazuh base docker-compose.yml if present
-  ansible.builtin.replace:
-    path: "{{ wazuh_singlenode_dir }}/docker-compose.yml"
-    regexp: '^\s+-\s+['\''"]9200:9200['\''"]\s*$'
-    replace: '# Port 9200 removed by Ansible, using {{ wazuh_indexer_port }} from override file'
-  when: wazuh_singlenode_dir is defined
-  ignore_errors: true
-
 - name: Verify Wazuh indexer port configuration
   ansible.builtin.debug:
     msg: "Wazuh indexer will use port {{ wazuh_indexer_port }} (configured in group_vars)"
