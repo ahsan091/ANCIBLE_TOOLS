@@ -26,16 +26,25 @@
   become_user: "{{ target_user }}"
   when: not shuffle_repo.stat.exists
 
+- name: Reset local modifications before updating Shuffle repository
+  ansible.builtin.shell: |
+    cd {{ shuffle_install_dir }}
+    git reset --hard HEAD
+    git clean -fd
+  become_user: "{{ target_user }}"
+  when: shuffle_repo.stat.exists
+  ignore_errors: true
+
 - name: Update Shuffle repository
   ansible.builtin.git:
     repo: https://github.com/Shuffle/Shuffle.git
     dest: "{{ shuffle_install_dir }}"
     version: "{{ shuffle_git_ref }}"
     update: true
+    force: false
   become_user: "{{ target_user }}"
   when: shuffle_repo.stat.exists
   register: git_update
-  ignore_errors: true
 
 - name: Create shuffle-database directory
   ansible.builtin.file:
@@ -78,6 +87,37 @@
   args:
     executable: /bin/bash
   changed_when: false
+  ignore_errors: true
+
+- name: Remove ports section from opensearch service and obsolete version field (fixes YAML structure and port conflict)
+  ansible.builtin.shell: |
+    cd {{ shuffle_install_dir }}
+    python3 -c "
+    import yaml
+    with open('docker-compose.yml', 'r') as f:
+        data = yaml.safe_load(f) or {}
+    # Remove ports from opensearch service if it exists
+    if 'services' in data and 'opensearch' in data.get('services', {}):
+        data['services']['opensearch'].pop('ports', None)
+    # Remove obsolete version field (Docker Compose v2 doesn't need it)
+    if 'version' in data:
+        del data['version']
+    with open('docker-compose.yml', 'w') as f:
+        yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    "
+  args:
+    executable: /bin/bash
+  changed_when: true
+  failed_when: false
+  ignore_errors: true
+
+- name: Stop and remove existing opensearch container if it exists (to fix port conflict)
+  ansible.builtin.command:
+    cmd: docker stop shuffle-opensearch && docker rm shuffle-opensearch
+    chdir: "{{ shuffle_install_dir }}"
+  register: cleanup_opensearch
+  changed_when: cleanup_opensearch.rc == 0
+  failed_when: false
   ignore_errors: true
 
 - name: Deploy Shuffle stack

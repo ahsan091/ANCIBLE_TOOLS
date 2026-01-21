@@ -26,6 +26,15 @@
   become_user: "{{ target_user }}"
   when: not thehive_repo.stat.exists
 
+- name: Reset local modifications before updating TheHive repository
+  ansible.builtin.shell: |
+    cd {{ thehive_install_dir }}
+    git reset --hard HEAD
+    git clean -fd
+  become_user: "{{ target_user }}"
+  when: thehive_repo.stat.exists
+  ignore_errors: true
+
 - name: Update TheHive repository
   ansible.builtin.git:
     repo: https://github.com/StrangeBeeCorp/docker.git
@@ -35,7 +44,6 @@
   become_user: "{{ target_user }}"
   when: thehive_repo.stat.exists
   register: git_update
-  ignore_errors: true
 
 - name: Set TheHive profile directory
   ansible.builtin.set_fact:
@@ -104,12 +112,106 @@
     recurse: true
   ignore_errors: true
 
+- name: Stop and remove existing Elasticsearch container if running
+  ansible.builtin.shell: |
+    cd {{ thehive_profile_dir }}
+    docker compose stop elasticsearch 2>/dev/null || true
+    docker compose rm -f elasticsearch 2>/dev/null || true
+    docker stop elasticsearch 2>/dev/null || true
+    docker rm -f elasticsearch 2>/dev/null || true
+  changed_when: false
+  failed_when: false
+
+- name: Ensure Elasticsearch directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ thehive_profile_dir }}/elasticsearch/data"
+    - "{{ thehive_profile_dir }}/elasticsearch/logs"
+  ignore_errors: true
+
+- name: Fix Elasticsearch data directory permissions (must be 1000:1000 for ES 8.x)
+  ansible.builtin.shell: |
+    chown -R 1000:1000 {{ thehive_profile_dir }}/elasticsearch/data
+    chmod -R 755 {{ thehive_profile_dir }}/elasticsearch/data
+    # Ensure the directory is writable
+    find {{ thehive_profile_dir }}/elasticsearch/data -type d -exec chmod 755 {} \;
+    find {{ thehive_profile_dir }}/elasticsearch/data -type f -exec chmod 644 {} \;
+  changed_when: true
+  failed_when: false
+
+- name: Fix Elasticsearch logs directory permissions (must be 1000:1000 for ES 8.x)
+  ansible.builtin.shell: |
+    chown -R 1000:1000 {{ thehive_profile_dir }}/elasticsearch/logs
+    chmod -R 755 {{ thehive_profile_dir }}/elasticsearch/logs
+    # Ensure the directory is writable
+    find {{ thehive_profile_dir }}/elasticsearch/logs -type d -exec chmod 755 {} \;
+    find {{ thehive_profile_dir }}/elasticsearch/logs -type f -exec chmod 644 {} \;
+  changed_when: true
+  failed_when: false
+
 - name: Deploy TheHive stack
   community.docker.docker_compose_v2:
     project_src: "{{ thehive_profile_dir }}"
     state: present
     pull: missing
   register: thehive_compose
+  async: 600
+  poll: 15
+  ignore_errors: true
+
+- name: Wait a bit for Elasticsearch to initialize
+  ansible.builtin.pause:
+    seconds: 30
+  when: thehive_compose.failed | default(false)
+
+- name: Check Elasticsearch container status and logs
+  ansible.builtin.shell: |
+    echo "=== Elasticsearch Container Status ==="
+    docker ps -a --filter name=elasticsearch --format "table {{ '{{' }}.Names{{ '}}' }}\t{{ '{{' }}.Status{{ '}}' }}\t{{ '{{' }}.State{{ '}}' }}"
+    echo ""
+    echo "=== Last 50 lines of Elasticsearch logs ==="
+    docker logs elasticsearch --tail 50 2>&1 || echo "Could not retrieve logs"
+  register: elasticsearch_diagnostics
+  changed_when: false
+  failed_when: false
+  when: thehive_compose.failed | default(false)
+
+- name: Display Elasticsearch diagnostics
+  ansible.builtin.debug:
+    msg: "{{ elasticsearch_diagnostics.stdout_lines | default([]) }}"
+  when: elasticsearch_diagnostics.stdout_lines is defined and elasticsearch_diagnostics.stdout_lines | length > 0
+
+- name: Fix Elasticsearch data directory permissions
+  ansible.builtin.file:
+    path: "{{ thehive_profile_dir }}/elasticsearch/data"
+    owner: "1000"
+    group: "1000"
+    mode: '0755'
+    recurse: true
+  when: thehive_compose.failed | default(false)
+  ignore_errors: true
+
+- name: Fix Elasticsearch logs directory permissions
+  ansible.builtin.file:
+    path: "{{ thehive_profile_dir }}/elasticsearch/logs"
+    owner: "1000"
+    group: "1000"
+    mode: '0755'
+    recurse: true
+  when: thehive_compose.failed | default(false)
+  ignore_errors: true
+
+- name: Retry TheHive deployment after diagnostics
+  community.docker.docker_compose_v2:
+    project_src: "{{ thehive_profile_dir }}"
+    state: present
+    pull: missing
+  register: thehive_compose_retry
+  when: thehive_compose.failed | default(false)
+  ignore_errors: true
 
 - name: Wait for TheHive to be ready
   ansible.builtin.uri:

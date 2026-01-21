@@ -26,7 +26,6 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly LOG_FILE="/var/log/guardianeye-socstack-deploy.log"
 readonly REQUIRED_ANSIBLE_VERSION="2.14.0"
-readonly REQUIRED_UBUNTU_VERSION="20.04"
 
 # Colors for output (only if terminal supports it)
 if [[ -t 1 ]]; then
@@ -38,6 +37,19 @@ if [[ -t 1 ]]; then
 else
     readonly RED='' GREEN='' YELLOW='' BLUE='' NC=''
 fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Port Auto-Resolution Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+port_in_use() { ss -ltnH | awk '{print $4}' | grep -Eq "(^|:)${1}$"; }
+
+next_free_port() {
+    local p="$1"
+    while port_in_use "$p"; do
+        p=$((p+1))
+    done
+    echo "$p"
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Logging Functions
@@ -155,7 +167,7 @@ install_dependencies() {
     # Install required packages
     local packages_to_install=()
     
-    for pkg in ansible git python3 python3-pip jq curl; do
+    for pkg in git python3 python3-pip jq curl; do
         if ! dpkg -s "$pkg" &> /dev/null; then
             packages_to_install+=("$pkg")
         fi
@@ -169,19 +181,36 @@ install_dependencies() {
     log OK "System dependencies installed"
 }
 
+install_ansible_core() {
+    log INFO "Ensuring Ansible Core >= ${REQUIRED_ANSIBLE_VERSION} ..."
+
+    # Prefer pip system-wide since we are running as root in enterprise bootstrap
+    # (avoids user PATH issues with --user)
+    python3 -m pip install --upgrade pip >/dev/null 2>&1 || true
+    python3 -m pip install --upgrade "ansible-core>=${REQUIRED_ANSIBLE_VERSION}" >/dev/null 2>&1
+
+    # Some distros still ship 'ansible' meta pkg separately; ansible-core gives ansible-playbook/ansible
+    command -v ansible >/dev/null 2>&1 || {
+        log ERROR "Ansible command not found after installing ansible-core"
+        exit 1
+    }
+}
+
 check_ansible_version() {
     local ansible_version
     ansible_version=$(ansible --version 2>/dev/null | head -1 | grep -oP '\d+\.\d+\.\d+' || echo "0.0.0")
-    
-    # Compare versions using sort -V
+
     if [[ "$(printf '%s\n' "$REQUIRED_ANSIBLE_VERSION" "$ansible_version" | sort -V | head -n1)" != "$REQUIRED_ANSIBLE_VERSION" ]]; then
-        log ERROR "Ansible $ansible_version is older than required $REQUIRED_ANSIBLE_VERSION"
-        log ERROR "Please upgrade Ansible manually:"
-        log ERROR "  Option 1 (apt): sudo apt install ansible"
-        log ERROR "  Option 2 (pip): pip3 install --user ansible"
+        log WARN "Ansible $ansible_version is older than required $REQUIRED_ANSIBLE_VERSION"
+        install_ansible_core
+        ansible_version=$(ansible --version 2>/dev/null | head -1 | grep -oP '\d+\.\d+\.\d+' || echo "0.0.0")
+    fi
+
+    if [[ "$(printf '%s\n' "$REQUIRED_ANSIBLE_VERSION" "$ansible_version" | sort -V | head -n1)" != "$REQUIRED_ANSIBLE_VERSION" ]]; then
+        log ERROR "Ansible $ansible_version is still older than required $REQUIRED_ANSIBLE_VERSION"
         exit 1
     fi
-    
+
     log OK "Ansible: $(ansible --version | head -1)"
 }
 
@@ -199,6 +228,19 @@ install_galaxy_collections() {
     ansible-galaxy collection install -r "$requirements_file" --force-with-deps
     
     log OK "Galaxy collections installed"
+}
+
+auto_select_ports() {
+    # Only set if user didn't explicitly pass -e/--extra-vars for these
+    OPENCTI_WEB_PORT="${OPENCTI_WEB_PORT:-$(next_free_port 8090)}"
+    OPENCTI_MINIO_API_HOST_PORT="${OPENCTI_MINIO_API_HOST_PORT:-$(next_free_port 9200)}"
+    OPENCTI_MINIO_CONSOLE_HOST_PORT="${OPENCTI_MINIO_CONSOLE_HOST_PORT:-$(next_free_port 9201)}"
+
+    if [[ "$OPENCTI_MINIO_CONSOLE_HOST_PORT" == "$OPENCTI_MINIO_API_HOST_PORT" ]]; then
+        OPENCTI_MINIO_CONSOLE_HOST_PORT="$(next_free_port $((OPENCTI_MINIO_API_HOST_PORT+1)))"
+    fi
+
+    log OK "Auto-selected ports: OpenCTI=${OPENCTI_WEB_PORT}, MinIO(API)=${OPENCTI_MINIO_API_HOST_PORT}, MinIO(Console)=${OPENCTI_MINIO_CONSOLE_HOST_PORT}"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -225,9 +267,16 @@ run_ansible_playbook() {
     echo "Arguments: ${extra_args[*]:-none}" >> "$LOG_FILE"
     echo "────────────────────────────────────────────────────────────────" >> "$LOG_FILE"
     
+    # Build auto-selected port extra-vars
+    local auto_extra_vars=(
+        "--extra-vars" "opencti_web_port=${OPENCTI_WEB_PORT}"
+        "--extra-vars" "opencti_minio_api_host_port=${OPENCTI_MINIO_API_HOST_PORT}"
+        "--extra-vars" "opencti_minio_console_host_port=${OPENCTI_MINIO_CONSOLE_HOST_PORT}"
+    )
+    
     # Run playbook with explicit inventory (machine-independent)
     set +e
-    ansible-playbook -i "$inventory" "$playbook" "${extra_args[@]}" 2>&1 | tee -a "$LOG_FILE"
+    ansible-playbook -i "$inventory" "$playbook" "${auto_extra_vars[@]}" "${extra_args[@]}" 2>&1 | tee -a "$LOG_FILE"
     local exit_code=${PIPESTATUS[0]}
     set -e
     
@@ -249,7 +298,7 @@ print_success() {
     echo -e "   Wazuh Dashboard:  ${BLUE}https://localhost:443${NC}"
     echo -e "   TheHive:          ${BLUE}https://localhost:8443${NC}"
     echo -e "   Shuffle:          ${BLUE}http://localhost:3001${NC}"
-    echo -e "   OpenCTI:          ${BLUE}http://localhost:8090${NC}"
+    echo -e "   OpenCTI:          ${BLUE}http://localhost:${OPENCTI_WEB_PORT:-8090}${NC}"
     echo ""
     echo -e "⚠️  Post-deploy: Visit ${YELLOW}http://localhost:3001/adminsetup${NC} for Shuffle"
     echo ""
@@ -290,6 +339,9 @@ main() {
     install_galaxy_collections
     
     log INFO "Starting deployment..."
+    
+    # Auto-select ports to avoid conflicts
+    auto_select_ports
     
     # Pass through any arguments to ansible-playbook
     if run_ansible_playbook "$@"; then

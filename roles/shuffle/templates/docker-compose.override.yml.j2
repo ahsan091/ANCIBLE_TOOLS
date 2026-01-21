@@ -3,7 +3,7 @@
 # Attaches all services to external soc_net network and configures ports
 
 services:
-  shuffle-frontend:
+  frontend:
     ports:
       - "{{ shuffle_frontend_http_port }}:80"
       - "{{ shuffle_frontend_https_port }}:443"
@@ -11,19 +11,19 @@ services:
       - default
       - {{ soc_network_name }}
 
-  shuffle-backend:
+  backend:
     ports:
       - "{{ shuffle_backend_port }}:5001"
     networks:
       - default
       - {{ soc_network_name }}
 
-  shuffle-orborus:
+  orborus:
     networks:
       - default
       - {{ soc_network_name }}
 
-  shuffle-opensearch:
+  opensearch:
     ports:
       - "{{ shuffle_opensearch_port }}:9200"
     networks:

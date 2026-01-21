@@ -12,6 +12,9 @@ services:
       - {{ soc_network_name }}
 
   thehive:
+    # Remove port mapping from base docker-compose.yml (port 9000 conflicts with OpenCTI MinIO)
+    # TheHive is accessed via nginx reverse proxy on ports 8443 (HTTPS) and 9002 (HTTP)
+    ports: []
     networks:
       - default
       - {{ soc_network_name }}
@@ -22,11 +25,24 @@ services:
       - {{ soc_network_name }}
 
   elasticsearch:
+    user: "1000:1000"
+    environment:
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
     networks:
       - default
       - {{ soc_network_name }}
 
   cortex:
+    image: "thehiveproject/cortex:{{ cortex_image_version }}"
+    # Override port mapping: base docker-compose.yml maps 9000:9001, but 9000 conflicts with OpenCTI MinIO
+    # Use thehive_cortex_host_port (default 9003) for host, container port remains 9001
+    ports:
+      - "{{ thehive_cortex_host_port | default(9003) }}:9001"
     networks:
       - default
       - {{ soc_network_name }}

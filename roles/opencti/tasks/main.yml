@@ -225,12 +225,48 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Deploy OpenCTI stack
 # ─────────────────────────────────────────────────────────────────────────────
+- name: Check for port conflicts before deployment
+  ansible.builtin.command:
+    cmd: ss -tlnH | awk '{print $4}' | grep -Eq "(^|:)({{ opencti_web_port | default(8090) }}|{{ opencti_minio_api_host_port | default(9200) }}|{{ opencti_minio_console_host_port | default(9201) }})$"
+  register: port_check
+  changed_when: false
+  failed_when: false
+  ignore_errors: true
+
+- name: Warn about port conflicts
+  ansible.builtin.debug:
+    msg: |
+      ⚠️  WARNING: One or more ports are already in use!
+      OpenCTI Web: {{ opencti_web_port | default(8090) }}
+      MinIO API: {{ opencti_minio_api_host_port | default(9200) }}
+      MinIO Console: {{ opencti_minio_console_host_port | default(9201) }}
+      Check with: ss -tlnp | grep -E ':({{ opencti_web_port | default(8090) }}|{{ opencti_minio_api_host_port | default(9200) }}|{{ opencti_minio_console_host_port | default(9201) }) '
+  when: port_check.rc == 0
+
 - name: Deploy OpenCTI stack
   community.docker.docker_compose_v2:
     project_src: "{{ opencti_install_dir }}/{{ opencti_profile }}"
     state: present
     pull: missing
   register: opencti_compose
+  # Note: This task can take 30-60 minutes on first run due to image pulls
+  # If it hangs, check: sudo docker compose -f /opt/opencti/docker/docker-compose.yml ps
+
+- name: Verify OpenCTI containers are running
+  ansible.builtin.command:
+    cmd: docker compose ps --format json
+    chdir: "{{ opencti_install_dir }}/{{ opencti_profile }}"
+  register: opencti_containers
+  changed_when: false
+  failed_when: false
+  ignore_errors: true
+
+- name: Display container status
+  ansible.builtin.debug:
+    msg: |
+      OpenCTI Deployment Status:
+      {{ opencti_containers.stdout | default('Unable to check container status') }}
+  when: opencti_containers.stdout is defined
 
 - name: Wait for OpenCTI to be ready
   ansible.builtin.uri:

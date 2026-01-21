@@ -31,8 +31,8 @@ opencti_profile: "docker"
 # ----------------------------------------------------------------------------
 # IMPORTANT: Pin to specific tags/commits to avoid upstream breaking changes
 wazuh_git_ref: "v4.14.0"
-thehive_git_ref: "5.5.10"        # Matches TheHive release tag
-shuffle_git_ref: "1.4.0"         # Shuffle release tag
+thehive_git_ref: "main"           # Use main branch (tag 5.5.10 doesn't exist in docker repo)
+shuffle_git_ref: "v1.4.0"       # Shuffle release tag (note: uses 'v' prefix)
 opencti_git_ref: "2d9978fe327864c6e04bf9f6d4884054697e71a7"         # OpenCTI release tag
 
 # ----------------------------------------------------------------------------
@@ -41,7 +41,7 @@ opencti_git_ref: "2d9978fe327864c6e04bf9f6d4884054697e71a7"         # OpenCTI re
 # Git ref is defined above in "Pinned Git Refs" section
 wazuh_dashboard_port: 443
 wazuh_api_port: 55000
-wazuh_indexer_port: 9200
+wazuh_indexer_port: 9203  # Changed from 9200 to avoid conflict with OpenCTI MinIO
 
 # Default Wazuh credentials (from config files)
 wazuh_api_user: "wazuh-wui"
@@ -50,7 +50,8 @@ wazuh_api_user: "wazuh-wui"
 # TheHive Configuration
 # ----------------------------------------------------------------------------
 thehive_https_port: 8443
-thehive_http_port: 9000
+thehive_http_port: 9002  # Changed from 9000 to avoid conflict with OpenCTI MinIO
+thehive_cortex_host_port: 9003  # Cortex host port (container port is 9001) - avoids conflict with OpenCTI MinIO (9000)
 thehive_service_name: "thehive-local"
 
 # TheHive pinned image versions
@@ -64,13 +65,20 @@ cortex_image_version: "3.1.8-1"
 thehive_admin_email: "admin@thehive.local"
 thehive_admin_password: "secret"
 
+# TheHive Nginx configuration
+thehive_nginx_server_name: "localhost"
+thehive_nginx_ssl_trusted_certificate: ""
+
+# TheHive Elasticsearch password
+thehive_elasticsearch_password: "changeme"
+
 # ----------------------------------------------------------------------------
 # Shuffle Configuration
 # ----------------------------------------------------------------------------
 shuffle_frontend_http_port: 3001
 shuffle_frontend_https_port: 3443
 shuffle_backend_port: 5001
-shuffle_opensearch_port: 9201
+shuffle_opensearch_port: 9202  # Changed from 9201 to avoid conflicts
 shuffle_environment_name: "GuardianEyeShuffle"
 shuffle_app_replicas: 3
 

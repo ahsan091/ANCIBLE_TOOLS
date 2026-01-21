@@ -9,6 +9,8 @@ services:
       - {{ soc_network_name }}
 
   wazuh.indexer:
+    ports:
+      - "{{ wazuh_indexer_port }}:9200"
     networks:
       - default
       - {{ soc_network_name }}
