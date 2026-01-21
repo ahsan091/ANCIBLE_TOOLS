@@ -1,0 +1,125 @@
+---
+# ============================================================================
+# Role: wazuh
+# Purpose: Deploy Wazuh (Security Information and Event Management Platform)
+# ============================================================================
+
+- name: Check if Wazuh directory exists
+  ansible.builtin.stat:
+    path: "{{ wazuh_install_dir }}/.git"
+  register: wazuh_repo
+
+- name: Remove existing Wazuh directory for clean install
+  ansible.builtin.file:
+    path: "{{ wazuh_install_dir }}"
+    state: absent
+  when: wazuh_repo.stat.exists and wazuh_force_reinstall | default(false)
+
+- name: Clone Wazuh Docker repository
+  ansible.builtin.git:
+    repo: https://github.com/wazuh/wazuh-docker.git
+    dest: "{{ wazuh_install_dir }}"
+    version: "{{ wazuh_git_ref }}"
+    force: false
+  register: wazuh_clone
+  when: not wazuh_repo.stat.exists or wazuh_force_reinstall | default(false)
+
+- name: Set Wazuh single-node directory
+  ansible.builtin.set_fact:
+    wazuh_singlenode_dir: "{{ wazuh_install_dir }}/single-node"
+
+- name: Check if Wazuh single-node directory exists
+  ansible.builtin.stat:
+    path: "{{ wazuh_singlenode_dir }}"
+  register: singlenode_check
+
+- name: Fail if single-node directory does not exist
+  ansible.builtin.fail:
+    msg: "Wazuh single-node directory {{ wazuh_singlenode_dir }} does not exist"
+  when: not singlenode_check.stat.exists
+
+- name: Check if Wazuh certificates exist
+  ansible.builtin.stat:
+    path: "{{ wazuh_singlenode_dir }}/config/wazuh_indexer_ssl_certs"
+  register: wazuh_certs
+
+- name: Generate Wazuh SSL certificates
+  community.docker.docker_compose_v2:
+    project_src: "{{ wazuh_singlenode_dir }}"
+    files:
+      - generate-indexer-certs.yml
+    state: present
+    remove_orphans: true
+  when: not wazuh_certs.stat.exists
+  register: cert_generation
+
+- name: Wait for certificate generation to complete
+  ansible.builtin.pause:
+    seconds: 10
+  when: cert_generation.changed | default(false)
+
+- name: Create Wazuh docker-compose.override.yml
+  ansible.builtin.template:
+    src: docker-compose.override.yml.j2
+    dest: "{{ wazuh_singlenode_dir }}/docker-compose.override.yml"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Deploy Wazuh stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ wazuh_singlenode_dir }}"
+    state: present
+    pull: missing
+  register: wazuh_compose
+
+- name: Wait for Wazuh Dashboard to be ready
+  ansible.builtin.uri:
+    url: "https://localhost:{{ wazuh_dashboard_port }}"
+    method: GET
+    return_content: true
+    validate_certs: false
+    status_code: [200, 302, 503, 502]
+  register: wazuh_health
+  retries: "{{ health_check_retries }}"
+  delay: "{{ health_check_delay }}"
+  until: wazuh_health.status in [200, 302]
+  ignore_errors: true
+
+- name: Wait for Wazuh API to be ready
+  ansible.builtin.uri:
+    url: "https://localhost:{{ wazuh_api_port }}"
+    method: GET
+    return_content: true
+    validate_certs: false
+    status_code: [200, 401, 302, 503, 502]
+  register: wazuh_api_health
+  retries: "{{ health_check_retries }}"
+  delay: "{{ health_check_delay }}"
+  until: wazuh_api_health.status in [200, 401, 302]
+  ignore_errors: true
+
+- name: Read Wazuh dashboard credentials
+  ansible.builtin.slurp:
+    src: "{{ wazuh_singlenode_dir }}/config/wazuh_dashboard/wazuh.yml"
+  register: wazuh_dashboard_config
+  ignore_errors: true
+
+- name: Parse Wazuh credentials
+  ansible.builtin.set_fact:
+    wazuh_creds: "{{ wazuh_dashboard_config.content | b64decode | regex_search('password:\\s*(.+)', '\\1') | first | default('secret') }}"
+  when: wazuh_dashboard_config is succeeded
+  ignore_errors: true
+
+- name: Display Wazuh deployment status
+  ansible.builtin.debug:
+    msg: |
+      ✅ Wazuh deployed successfully!
+      📍 Directory: {{ wazuh_singlenode_dir }}
+      🔒 Dashboard: https://localhost:{{ wazuh_dashboard_port }}
+      🔌 API: https://localhost:{{ wazuh_api_port }}
+      📊 Indexer: https://localhost:{{ wazuh_indexer_port }}
+      👤 User: {{ wazuh_api_user }}
+      🔑 Password: Check {{ wazuh_singlenode_dir }}/config/wazuh_dashboard/wazuh.yml
+      
+      ⚠️  Note: Accept the self-signed certificate warning in your browser.

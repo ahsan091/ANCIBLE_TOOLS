@@ -1,0 +1,5 @@
+# OpenCTI MinIO host ports (avoid conflicts)
+opencti_minio_api_host_port: 9200
+opencti_minio_console_host_port: 9201
+
+opencti_web_port: 8091

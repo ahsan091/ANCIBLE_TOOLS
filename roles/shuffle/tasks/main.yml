@@ -1,0 +1,114 @@
+---
+# ============================================================================
+# Role: shuffle
+# Purpose: Deploy Shuffle (Security Orchestration and Automation Platform)
+# ============================================================================
+
+- name: Create Shuffle installation directory
+  ansible.builtin.file:
+    path: "{{ shuffle_install_dir }}"
+    state: directory
+    owner: "{{ target_user }}"
+    group: "{{ target_user }}"
+    mode: '0755'
+
+- name: Check if Shuffle repository exists
+  ansible.builtin.stat:
+    path: "{{ shuffle_install_dir }}/.git"
+  register: shuffle_repo
+
+- name: Clone Shuffle repository
+  ansible.builtin.git:
+    repo: https://github.com/Shuffle/Shuffle.git
+    dest: "{{ shuffle_install_dir }}"
+    version: "{{ shuffle_git_ref }}"
+    force: false
+  become_user: "{{ target_user }}"
+  when: not shuffle_repo.stat.exists
+
+- name: Update Shuffle repository
+  ansible.builtin.git:
+    repo: https://github.com/Shuffle/Shuffle.git
+    dest: "{{ shuffle_install_dir }}"
+    version: "{{ shuffle_git_ref }}"
+    update: true
+  become_user: "{{ target_user }}"
+  when: shuffle_repo.stat.exists
+  register: git_update
+  ignore_errors: true
+
+- name: Create shuffle-database directory
+  ansible.builtin.file:
+    path: "{{ shuffle_install_dir }}/shuffle-database"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: '0755'
+
+- name: Create Shuffle .env file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ shuffle_install_dir }}/.env"
+    owner: "{{ target_user }}"
+    group: "{{ target_user }}"
+    mode: '0600'
+
+- name: Create Shuffle docker-compose.override.yml
+  ansible.builtin.template:
+    src: docker-compose.override.yml.j2
+    dest: "{{ shuffle_install_dir }}/docker-compose.override.yml"
+    owner: "{{ target_user }}"
+    group: "{{ target_user }}"
+    mode: '0644'
+
+- name: Remove invalid bind options from named volumes (Shuffle-specific fix)
+  ansible.builtin.shell: |
+    cd {{ shuffle_install_dir }}
+    if command -v yq >/dev/null 2>&1; then
+      for service in $(yq eval '.services | keys | .[]' docker-compose.yml 2>/dev/null); do
+        volumes_count=$(yq eval ".services.$service.volumes | length" docker-compose.yml 2>/dev/null || echo 0)
+        for ((i=0; i<volumes_count; i++)); do
+          volume_type=$(yq eval ".services.$service.volumes[$i].type" docker-compose.yml 2>/dev/null)
+          if [[ "$volume_type" == "volume" ]]; then
+            yq eval -i "del(.services.$service.volumes[$i].bind)" docker-compose.yml 2>/dev/null || true
+          fi
+        done
+      done
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: false
+  ignore_errors: true
+
+- name: Deploy Shuffle stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ shuffle_install_dir }}"
+    state: present
+    pull: missing
+    build: policy
+  register: shuffle_compose
+
+- name: Wait for Shuffle frontend to be ready
+  ansible.builtin.uri:
+    url: "http://localhost:{{ shuffle_frontend_http_port }}"
+    method: GET
+    return_content: true
+    status_code: [200, 302, 503, 502]
+  register: shuffle_health
+  retries: "{{ health_check_retries }}"
+  delay: "{{ health_check_delay }}"
+  until: shuffle_health.status in [200, 302]
+  ignore_errors: true
+
+- name: Display Shuffle deployment status
+  ansible.builtin.debug:
+    msg: |
+      ✅ Shuffle deployed successfully!
+      📍 Directory: {{ shuffle_install_dir }}
+      🌐 HTTP URL: http://localhost:{{ shuffle_frontend_http_port }}
+      🔒 HTTPS URL: https://localhost:{{ shuffle_frontend_https_port }}
+      🔧 Backend API: http://localhost:{{ shuffle_backend_port }}
+      
+      ⚠️  IMPORTANT: First-time setup required!
+      Navigate to: http://localhost:{{ shuffle_frontend_http_port }}/adminsetup
+      to create your admin account.

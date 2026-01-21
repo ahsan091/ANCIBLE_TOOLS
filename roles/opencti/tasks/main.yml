@@ -1,0 +1,255 @@
+---
+# ============================================================================
+# Role: opencti
+# Purpose: Deploy OpenCTI (Cyber Threat Intelligence Platform)
+# ============================================================================
+# This role uses .env.sample from upstream as baseline and applies overrides
+# via lineinfile for idempotency. Does NOT wipe the .env file on reruns.
+# ============================================================================
+
+- name: Create OpenCTI installation directory
+  ansible.builtin.file:
+    path: "{{ opencti_install_dir }}"
+    state: directory
+    owner: "{{ target_user }}"
+    group: "{{ target_user }}"
+    mode: '0755'
+
+- name: Check if OpenCTI repository exists
+  ansible.builtin.stat:
+    path: "{{ opencti_install_dir }}/{{ opencti_profile }}/.git"
+  register: opencti_repo
+
+- name: Clone OpenCTI Docker repository
+  ansible.builtin.git:
+    repo: https://github.com/OpenCTI-Platform/docker.git
+    dest: "{{ opencti_install_dir }}/{{ opencti_profile }}"
+    version: "{{ opencti_git_ref }}"
+    force: false
+  become_user: "{{ target_user }}"
+  when: not opencti_repo.stat.exists
+
+- name: Update OpenCTI repository
+  ansible.builtin.git:
+    repo: https://github.com/OpenCTI-Platform/docker.git
+    dest: "{{ opencti_install_dir }}/{{ opencti_profile }}"
+    version: "{{ opencti_git_ref }}"
+    update: true
+  become_user: "{{ target_user }}"
+  when: opencti_repo.stat.exists
+  register: git_update
+  ignore_errors: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Generate UUIDs for all required tokens/connector IDs
+# These are generated once and reused on reruns if already in .env
+# ─────────────────────────────────────────────────────────────────────────────
+- name: Check if .env file exists
+  ansible.builtin.stat:
+    path: "{{ opencti_install_dir }}/{{ opencti_profile }}/.env"
+  register: env_file_stat
+
+- name: Check if .env.sample exists
+  ansible.builtin.stat:
+    path: "{{ opencti_install_dir }}/{{ opencti_profile }}/.env.sample"
+  register: env_sample_stat
+
+- name: Copy .env.sample to .env as baseline (first run only)
+  ansible.builtin.copy:
+    src: "{{ opencti_install_dir }}/{{ opencti_profile }}/.env.sample"
+    dest: "{{ opencti_install_dir }}/{{ opencti_profile }}/.env"
+    remote_src: true
+    owner: "{{ target_user }}"
+    group: "{{ target_user }}"
+    mode: '0600'
+  when: 
+    - env_sample_stat.stat.exists
+    - not env_file_stat.stat.exists
+
+- name: Read existing .env to check for existing UUIDs
+  ansible.builtin.slurp:
+    src: "{{ opencti_install_dir }}/{{ opencti_profile }}/.env"
+  register: existing_env
+  when: env_file_stat.stat.exists
+  ignore_errors: true
+
+- name: Parse existing UUIDs from .env
+  ansible.builtin.set_fact:
+    existing_env_content: "{{ (existing_env.content | default('') | b64decode) if existing_env is succeeded else '' }}"
+
+- name: Generate or reuse OpenCTI UUIDs
+  ansible.builtin.set_fact:
+    opencti_admin_token: >-
+      {{ (existing_env_content | regex_search('OPENCTI_ADMIN_TOKEN=([0-9a-f-]{36})', '\1') | first)
+         if (existing_env_content | regex_search('OPENCTI_ADMIN_TOKEN=([0-9a-f-]{36})'))
+         else lookup('pipe', 'cat /proc/sys/kernel/random/uuid') }}
+    opencti_healthcheck_key: >-
+      {{ (existing_env_content | regex_search('OPENCTI_HEALTHCHECK_ACCESS_KEY=([0-9a-f-]{36})', '\1') | first)
+         if (existing_env_content | regex_search('OPENCTI_HEALTHCHECK_ACCESS_KEY=([0-9a-f-]{36})'))
+         else lookup('pipe', 'cat /proc/sys/kernel/random/uuid') }}
+    xtm_composer_id: >-
+      {{ (existing_env_content | regex_search('XTM_COMPOSER_ID=([0-9a-f-]{36})', '\1') | first)
+         if (existing_env_content | regex_search('XTM_COMPOSER_ID=([0-9a-f-]{36})'))
+         else lookup('pipe', 'cat /proc/sys/kernel/random/uuid') }}
+    connector_history_id: >-
+      {{ (existing_env_content | regex_search('CONNECTOR_HISTORY_ID=([0-9a-f-]{36})', '\1') | first)
+         if (existing_env_content | regex_search('CONNECTOR_HISTORY_ID=([0-9a-f-]{36})'))
+         else lookup('pipe', 'cat /proc/sys/kernel/random/uuid') }}
+    connector_export_stix_id: >-
+      {{ (existing_env_content | regex_search('CONNECTOR_EXPORT_FILE_STIX_ID=([0-9a-f-]{36})', '\1') | first)
+         if (existing_env_content | regex_search('CONNECTOR_EXPORT_FILE_STIX_ID=([0-9a-f-]{36})'))
+         else lookup('pipe', 'cat /proc/sys/kernel/random/uuid') }}
+    connector_export_csv_id: >-
+      {{ (existing_env_content | regex_search('CONNECTOR_EXPORT_FILE_CSV_ID=([0-9a-f-]{36})', '\1') | first)
+         if (existing_env_content | regex_search('CONNECTOR_EXPORT_FILE_CSV_ID=([0-9a-f-]{36})'))
+         else lookup('pipe', 'cat /proc/sys/kernel/random/uuid') }}
+    connector_export_txt_id: >-
+      {{ (existing_env_content | regex_search('CONNECTOR_EXPORT_FILE_TXT_ID=([0-9a-f-]{36})', '\1') | first)
+         if (existing_env_content | regex_search('CONNECTOR_EXPORT_FILE_TXT_ID=([0-9a-f-]{36})'))
+         else lookup('pipe', 'cat /proc/sys/kernel/random/uuid') }}
+    connector_import_stix_id: >-
+      {{ (existing_env_content | regex_search('CONNECTOR_IMPORT_FILE_STIX_ID=([0-9a-f-]{36})', '\1') | first)
+         if (existing_env_content | regex_search('CONNECTOR_IMPORT_FILE_STIX_ID=([0-9a-f-]{36})'))
+         else lookup('pipe', 'cat /proc/sys/kernel/random/uuid') }}
+    connector_import_yara_id: >-
+      {{ (existing_env_content | regex_search('CONNECTOR_IMPORT_FILE_YARA_ID=([0-9a-f-]{36})', '\1') | first)
+         if (existing_env_content | regex_search('CONNECTOR_IMPORT_FILE_YARA_ID=([0-9a-f-]{36})'))
+         else lookup('pipe', 'cat /proc/sys/kernel/random/uuid') }}
+    connector_import_doc_id: >-
+      {{ (existing_env_content | regex_search('CONNECTOR_IMPORT_DOCUMENT_ID=([0-9a-f-]{36})', '\1') | first)
+         if (existing_env_content | regex_search('CONNECTOR_IMPORT_DOCUMENT_ID=([0-9a-f-]{36})'))
+         else lookup('pipe', 'cat /proc/sys/kernel/random/uuid') }}
+    connector_import_extref_id: >-
+      {{ (existing_env_content | regex_search('CONNECTOR_IMPORT_EXTERNAL_REFERENCE_ID=([0-9a-f-]{36})', '\1') | first)
+         if (existing_env_content | regex_search('CONNECTOR_IMPORT_EXTERNAL_REFERENCE_ID=([0-9a-f-]{36})'))
+         else lookup('pipe', 'cat /proc/sys/kernel/random/uuid') }}
+    connector_mitre_id: >-
+      {{ (existing_env_content | regex_search('CONNECTOR_MITRE_ID=([0-9a-f-]{36})', '\1') | first)
+         if (existing_env_content | regex_search('CONNECTOR_MITRE_ID=([0-9a-f-]{36})'))
+         else lookup('pipe', 'cat /proc/sys/kernel/random/uuid') }}
+    connector_analysis_id: >-
+      {{ (existing_env_content | regex_search('CONNECTOR_ANALYSIS_ID=([0-9a-f-]{36})', '\1') | first)
+         if (existing_env_content | regex_search('CONNECTOR_ANALYSIS_ID=([0-9a-f-]{36})'))
+         else lookup('pipe', 'cat /proc/sys/kernel/random/uuid') }}
+    connector_opencti_id: >-
+      {{ (existing_env_content | regex_search('CONNECTOR_OPENCTI_ID=([0-9a-f-]{36})', '\1') | first)
+         if (existing_env_content | regex_search('CONNECTOR_OPENCTI_ID=([0-9a-f-]{36})'))
+         else lookup('pipe', 'cat /proc/sys/kernel/random/uuid') }}
+  run_once: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Apply environment overrides using lineinfile (idempotent)
+# ─────────────────────────────────────────────────────────────────────────────
+- name: Ensure .env file exists
+  ansible.builtin.file:
+    path: "{{ opencti_install_dir }}/{{ opencti_profile }}/.env"
+    state: touch
+    owner: "{{ target_user }}"
+    group: "{{ target_user }}"
+    mode: '0600'
+  changed_when: false
+
+- name: Set OpenCTI core environment variables
+  ansible.builtin.lineinfile:
+    path: "{{ opencti_install_dir }}/{{ opencti_profile }}/.env"
+    regexp: "^{{ item.key }}="
+    line: "{{ item.key }}={{ item.value }}"
+    state: present
+  loop:
+    - { key: "OPENCTI_EXTERNAL_SCHEME", value: "http" }
+    - { key: "OPENCTI_HOST", value: "localhost" }
+    - { key: "OPENCTI_PORT", value: "{{ opencti_web_port | default(8090) }}" }
+    - { key: "OPENCTI_ADMIN_EMAIL", value: "{{ opencti_admin_email | default('admin@opencti.local') }}" }
+    - { key: "OPENCTI_ADMIN_PASSWORD", value: "{{ opencti_admin_password | default('ChangeMePlease') }}" }
+    - { key: "OPENCTI_ADMIN_TOKEN", value: "{{ opencti_admin_token }}" }
+    - { key: "OPENCTI_HEALTHCHECK_ACCESS_KEY", value: "{{ opencti_healthcheck_key }}" }
+    - { key: "MINIO_ROOT_USER", value: "{{ minio_root_user | default('minioadmin') }}" }
+    - { key: "MINIO_ROOT_PASSWORD", value: "{{ minio_root_password | default('minioadmin') }}" }
+    - { key: "RABBITMQ_DEFAULT_USER", value: "{{ rabbitmq_user | default('guest') }}" }
+    - { key: "RABBITMQ_DEFAULT_PASS", value: "{{ rabbitmq_password | default('guest') }}" }
+    - { key: "ELASTIC_MEMORY_SIZE", value: "{{ elastic_memory_size | default('4G') }}" }
+    - { key: "SMTP_HOSTNAME", value: "{{ smtp_hostname | default('localhost') }}" }
+  no_log: false
+
+- name: Set OpenCTI connector UUIDs
+  ansible.builtin.lineinfile:
+    path: "{{ opencti_install_dir }}/{{ opencti_profile }}/.env"
+    regexp: "^{{ item.key }}="
+    line: "{{ item.key }}={{ item.value }}"
+    state: present
+  loop:
+    - { key: "XTM_COMPOSER_ID", value: "{{ xtm_composer_id }}" }
+    - { key: "CONNECTOR_HISTORY_ID", value: "{{ connector_history_id }}" }
+    - { key: "CONNECTOR_EXPORT_FILE_STIX_ID", value: "{{ connector_export_stix_id }}" }
+    - { key: "CONNECTOR_EXPORT_FILE_CSV_ID", value: "{{ connector_export_csv_id }}" }
+    - { key: "CONNECTOR_EXPORT_FILE_TXT_ID", value: "{{ connector_export_txt_id }}" }
+    - { key: "CONNECTOR_IMPORT_FILE_STIX_ID", value: "{{ connector_import_stix_id }}" }
+    - { key: "CONNECTOR_IMPORT_FILE_YARA_ID", value: "{{ connector_import_yara_id }}" }
+    - { key: "CONNECTOR_IMPORT_DOCUMENT_ID", value: "{{ connector_import_doc_id }}" }
+    - { key: "CONNECTOR_IMPORT_EXTERNAL_REFERENCE_ID", value: "{{ connector_import_extref_id }}" }
+    - { key: "CONNECTOR_MITRE_ID", value: "{{ connector_mitre_id }}" }
+    - { key: "CONNECTOR_ANALYSIS_ID", value: "{{ connector_analysis_id }}" }
+    - { key: "CONNECTOR_OPENCTI_ID", value: "{{ connector_opencti_id }}" }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Create docker-compose.override.yml
+# ─────────────────────────────────────────────────────────────────────────────
+- name: Create OpenCTI docker-compose.override.yml
+  ansible.builtin.template:
+    src: docker-compose.override.yml.j2
+    dest: "{{ opencti_install_dir }}/{{ opencti_profile }}/docker-compose.override.yml"
+    owner: "{{ target_user }}"
+    group: "{{ target_user }}"
+    mode: '0644'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Validate compose configuration BEFORE deploying
+# ─────────────────────────────────────────────────────────────────────────────
+- name: Validate docker-compose configuration
+  ansible.builtin.command:
+    cmd: docker compose config --quiet
+    chdir: "{{ opencti_install_dir }}/{{ opencti_profile }}"
+  register: compose_config_check
+  changed_when: false
+  failed_when: compose_config_check.rc != 0
+
+- name: Fail if compose config is invalid
+  ansible.builtin.fail:
+    msg: |
+      Docker Compose configuration is INVALID.
+      Directory: {{ opencti_install_dir }}/{{ opencti_profile }}
+      Error: {{ compose_config_check.stderr }}
+      Run 'docker compose config' manually to debug.
+  when: compose_config_check.rc != 0
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Deploy OpenCTI stack
+# ─────────────────────────────────────────────────────────────────────────────
+- name: Deploy OpenCTI stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ opencti_install_dir }}/{{ opencti_profile }}"
+    state: present
+    pull: missing
+  register: opencti_compose
+
+- name: Wait for OpenCTI to be ready
+  ansible.builtin.uri:
+    url: "http://localhost:{{ opencti_web_port | default(8090) }}/health"
+    method: GET
+    return_content: true
+    status_code: [200, 401, 503, 502]
+  register: opencti_health
+  retries: "{{ health_check_retries | default(30) }}"
+  delay: "{{ health_check_delay | default(10) }}"
+  until: opencti_health.status in [200, 401]
+  ignore_errors: true
+
+- name: Display OpenCTI deployment status
+  ansible.builtin.debug:
+    msg: |
+      ✅ OpenCTI deployed successfully!
+      📍 Directory: {{ opencti_install_dir }}/{{ opencti_profile }}
+      🌐 URL: http://localhost:{{ opencti_web_port | default(8090) }}
+      📧 Email: {{ opencti_admin_email | default('admin@opencti.local') }}
+      🔑 Password: {{ opencti_admin_password | default('ChangeMePlease') }}
+      🎫 Admin Token: {{ opencti_admin_token }}

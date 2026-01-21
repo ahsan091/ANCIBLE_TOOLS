@@ -1,0 +1,135 @@
+---
+# ============================================================================
+# Role: thehive
+# Purpose: Deploy TheHive (Security Incident Response Platform)
+# ============================================================================
+
+- name: Create TheHive installation directory
+  ansible.builtin.file:
+    path: "{{ thehive_install_dir }}"
+    state: directory
+    owner: "{{ target_user }}"
+    group: "{{ target_user }}"
+    mode: '0755'
+
+- name: Check if TheHive repository exists
+  ansible.builtin.stat:
+    path: "{{ thehive_install_dir }}/.git"
+  register: thehive_repo
+
+- name: Clone TheHive Docker repository
+  ansible.builtin.git:
+    repo: https://github.com/StrangeBeeCorp/docker.git
+    dest: "{{ thehive_install_dir }}"
+    version: "{{ thehive_git_ref }}"
+    force: false
+  become_user: "{{ target_user }}"
+  when: not thehive_repo.stat.exists
+
+- name: Update TheHive repository
+  ansible.builtin.git:
+    repo: https://github.com/StrangeBeeCorp/docker.git
+    dest: "{{ thehive_install_dir }}"
+    version: "{{ thehive_git_ref }}"
+    update: true
+  become_user: "{{ target_user }}"
+  when: thehive_repo.stat.exists
+  register: git_update
+  ignore_errors: true
+
+- name: Set TheHive profile directory
+  ansible.builtin.set_fact:
+    thehive_profile_dir: "{{ thehive_install_dir }}/{{ thehive_profile }}"
+
+- name: Check if TheHive profile directory exists
+  ansible.builtin.stat:
+    path: "{{ thehive_profile_dir }}"
+  register: profile_dir_check
+
+- name: Fail if profile directory does not exist
+  ansible.builtin.fail:
+    msg: "TheHive profile directory {{ thehive_profile_dir }} does not exist. Check thehive_profile variable."
+  when: not profile_dir_check.stat.exists
+
+- name: Make TheHive scripts executable
+  ansible.builtin.file:
+    path: "{{ thehive_profile_dir }}/scripts"
+    mode: '0755'
+    recurse: true
+  ignore_errors: true
+
+- name: Run TheHive permission check script
+  ansible.builtin.shell: |
+    cd {{ thehive_profile_dir }}
+    if [ -f scripts/check_permissions.sh ]; then
+      yes Y | ./scripts/check_permissions.sh || true
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: false
+  ignore_errors: true
+
+- name: Run TheHive init script
+  ansible.builtin.shell: |
+    cd {{ thehive_profile_dir }}
+    if [ -f scripts/init.sh ]; then
+      printf '%s\n' '{{ thehive_service_name }}' | ./scripts/init.sh || true
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: false
+  ignore_errors: true
+
+- name: Create TheHive .env file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ thehive_profile_dir }}/.env"
+    owner: "{{ target_user }}"
+    group: "{{ target_user }}"
+    mode: '0600'
+
+- name: Create TheHive docker-compose.override.yml
+  ansible.builtin.template:
+    src: docker-compose.override.yml.j2
+    dest: "{{ thehive_profile_dir }}/docker-compose.override.yml"
+    owner: "{{ target_user }}"
+    group: "{{ target_user }}"
+    mode: '0644'
+
+- name: Fix TheHive directory ownership
+  ansible.builtin.file:
+    path: "{{ thehive_profile_dir }}"
+    owner: "{{ target_user }}"
+    group: "{{ target_user }}"
+    recurse: true
+  ignore_errors: true
+
+- name: Deploy TheHive stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ thehive_profile_dir }}"
+    state: present
+    pull: missing
+  register: thehive_compose
+
+- name: Wait for TheHive to be ready
+  ansible.builtin.uri:
+    url: "https://localhost:{{ thehive_https_port }}"
+    method: GET
+    return_content: true
+    validate_certs: false
+    status_code: [200, 302, 503, 502]
+  register: thehive_health
+  retries: "{{ health_check_retries }}"
+  delay: "{{ health_check_delay }}"
+  until: thehive_health.status in [200, 302]
+  ignore_errors: true
+
+- name: Display TheHive deployment status
+  ansible.builtin.debug:
+    msg: |
+      ✅ TheHive deployed successfully!
+      📍 Directory: {{ thehive_profile_dir }}
+      🔒 HTTPS URL: https://localhost:{{ thehive_https_port }}
+      🌐 HTTP URL: http://localhost:{{ thehive_http_port }}
+      📧 Email: {{ thehive_admin_email }}
+      🔑 Password: {{ thehive_admin_password }}

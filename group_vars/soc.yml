@@ -1,0 +1,114 @@
+---
+# ============================================================================
+# GuardianEye SOC Stack - Central Configuration
+# ============================================================================
+# All ports, directories, versions, and credentials are defined here.
+# Modify these values according to your environment requirements.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Global Settings
+# ----------------------------------------------------------------------------
+timezone: "Asia/Karachi"
+soc_network_name: "soc_net"
+target_user: "{{ ansible_user_id }}"
+
+# System configuration
+sysctl_max_map_count: 1048575
+
+# ----------------------------------------------------------------------------
+# Directory Paths
+# ----------------------------------------------------------------------------
+wazuh_install_dir: "/root/wazuh-docker"
+thehive_install_dir: "/opt/thehive-docker"
+thehive_profile: "prod1-thehive"
+shuffle_install_dir: "/opt/shuffle"
+opencti_install_dir: "/opt/opencti"
+opencti_profile: "docker"
+
+# ----------------------------------------------------------------------------
+# Pinned Git Refs (for reproducible deployments)
+# ----------------------------------------------------------------------------
+# IMPORTANT: Pin to specific tags/commits to avoid upstream breaking changes
+wazuh_git_ref: "v4.14.0"
+thehive_git_ref: "5.5.10"        # Matches TheHive release tag
+shuffle_git_ref: "1.4.0"         # Shuffle release tag
+opencti_git_ref: "2d9978fe327864c6e04bf9f6d4884054697e71a7"         # OpenCTI release tag
+
+# ----------------------------------------------------------------------------
+# Wazuh Configuration
+# ----------------------------------------------------------------------------
+# Git ref is defined above in "Pinned Git Refs" section
+wazuh_dashboard_port: 443
+wazuh_api_port: 55000
+wazuh_indexer_port: 9200
+
+# Default Wazuh credentials (from config files)
+wazuh_api_user: "wazuh-wui"
+
+# ----------------------------------------------------------------------------
+# TheHive Configuration
+# ----------------------------------------------------------------------------
+thehive_https_port: 8443
+thehive_http_port: 9000
+thehive_service_name: "thehive-local"
+
+# TheHive pinned image versions
+thehive_image_version: "5.5.10"
+cassandra_image_version: "4.1"
+elasticsearch_image_version: "8.11.3"
+nginx_image_version: "1.25"
+cortex_image_version: "3.1.8-1"
+
+# Default TheHive credentials
+thehive_admin_email: "admin@thehive.local"
+thehive_admin_password: "secret"
+
+# ----------------------------------------------------------------------------
+# Shuffle Configuration
+# ----------------------------------------------------------------------------
+shuffle_frontend_http_port: 3001
+shuffle_frontend_https_port: 3443
+shuffle_backend_port: 5001
+shuffle_opensearch_port: 9201
+shuffle_environment_name: "GuardianEyeShuffle"
+shuffle_app_replicas: 3
+
+# Shuffle security settings
+shuffle_encryption_modifier: "GuardianEyeKey321!"
+shuffle_opensearch_password: "StrongShufflePassword321!"
+
+# Leave empty for first-time setup via /adminsetup
+shuffle_default_username: ""
+shuffle_default_password: ""
+shuffle_default_apikey: ""
+
+# ----------------------------------------------------------------------------
+# OpenCTI Configuration
+# ----------------------------------------------------------------------------
+opencti_web_port: 8090
+opencti_minio_port: 9001
+
+# OpenCTI credentials
+opencti_admin_email: "admin@opencti.local"
+opencti_admin_password: "ChangeMePlease"
+
+# Elasticsearch memory allocation for OpenCTI
+elastic_memory_size: "4G"
+
+# MinIO credentials
+minio_root_user: "minioadmin"
+minio_root_password: "minioadmin"
+
+# RabbitMQ credentials
+rabbitmq_user: "guest"
+rabbitmq_password: "guest"
+
+# SMTP (optional)
+smtp_hostname: "localhost"
+
+# ----------------------------------------------------------------------------
+# Health Check Configuration
+# ----------------------------------------------------------------------------
+health_check_retries: 30
+health_check_delay: 10

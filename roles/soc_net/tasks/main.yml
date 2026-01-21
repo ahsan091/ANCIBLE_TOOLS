@@ -1,0 +1,22 @@
+---
+# ============================================================================
+# Role: soc_net
+# Purpose: Create the shared Docker network for all SOC services
+# ============================================================================
+
+- name: Create soc_net Docker network
+  community.docker.docker_network:
+    name: "{{ soc_network_name }}"
+    state: present
+    driver: bridge
+  register: soc_net_result
+
+- name: Display network creation result
+  ansible.builtin.debug:
+    msg: "✅ Docker network '{{ soc_network_name }}' is ready (created: {{ soc_net_result.changed }})"
+
+- name: Verify soc_net network exists
+  ansible.builtin.command: docker network inspect {{ soc_network_name }}
+  register: network_inspect
+  changed_when: false
+  failed_when: network_inspect.rc != 0

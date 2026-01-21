@@ -1,0 +1,132 @@
+---
+# ============================================================================
+# GuardianEye SOC Stack - Main Deployment Playbook
+# ============================================================================
+# Deploys the complete SOC stack including:
+# - Docker Engine
+# - Docker Network (soc_net)
+# - OpenCTI (Cyber Threat Intelligence)
+# - Shuffle (Security Orchestration)
+# - TheHive (Case Management)
+# - Wazuh (SIEM/EDR)
+#
+# Usage:
+#   Full deployment:     ansible-playbook playbooks/deploy_socstack.yml
+#   Specific roles:      ansible-playbook playbooks/deploy_socstack.yml --tags opencti,wazuh
+#   Dry run:             ansible-playbook playbooks/deploy_socstack.yml --check
+# ============================================================================
+
+- name: Deploy GuardianEye SOC Stack
+  hosts: soc
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Display deployment banner
+      ansible.builtin.debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════╗
+          ║       GuardianEye SOC Stack - Ansible Deployment             ║
+          ║  Wazuh • TheHive • Shuffle • OpenCTI on Docker Network       ║
+          ╚══════════════════════════════════════════════════════════════╝
+      tags: always
+
+    - name: Verify Ansible version
+      ansible.builtin.assert:
+        that:
+          - ansible_version.full is version('2.14.0', '>=')
+        fail_msg: "This playbook requires Ansible 2.14.0 or higher"
+        success_msg: "Ansible version {{ ansible_version.full }} is compatible"
+      tags: always
+
+  roles:
+    # -------------------------------------------------------------------------
+    # Stage 1: System Prerequisites
+    # -------------------------------------------------------------------------
+    - role: common
+      tags:
+        - common
+        - prerequisites
+        - always
+
+    # -------------------------------------------------------------------------
+    # Stage 2: Docker Engine Installation
+    # -------------------------------------------------------------------------
+    - role: docker_engine
+      tags:
+        - docker_engine
+        - docker
+        - prerequisites
+
+    # -------------------------------------------------------------------------
+    # Stage 3: Docker Network Setup
+    # -------------------------------------------------------------------------
+    - role: soc_net
+      tags:
+        - soc_net
+        - network
+        - prerequisites
+
+    # -------------------------------------------------------------------------
+    # Stage 4: Security Tools Deployment
+    # Order: opencti -> shuffle -> thehive -> wazuh
+    # (OpenCTI first as it requires most resources during startup)
+    # -------------------------------------------------------------------------
+    - role: opencti
+      tags:
+        - opencti
+        - cti
+        - tools
+
+    - role: shuffle
+      tags:
+        - shuffle
+        - soar
+        - tools
+
+    - role: thehive
+      tags:
+        - thehive
+        - case_management
+        - tools
+
+    - role: wazuh
+      tags:
+        - wazuh
+        - siem
+        - tools
+
+  post_tasks:
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════╗
+          ║           SOC STACK DEPLOYMENT COMPLETE                      ║
+          ╚══════════════════════════════════════════════════════════════╝
+          
+          🌐 Access URLs:
+          ───────────────────────────────────────────────────────────────
+          Wazuh Dashboard:    https://localhost:{{ wazuh_dashboard_port }}
+          Wazuh API:          https://localhost:{{ wazuh_api_port }}
+          TheHive (HTTPS):    https://localhost:{{ thehive_https_port }}
+          TheHive (HTTP):     http://localhost:{{ thehive_http_port }}
+          Shuffle (HTTP):     http://localhost:{{ shuffle_frontend_http_port }}
+          Shuffle (HTTPS):    https://localhost:{{ shuffle_frontend_https_port }}
+          OpenCTI:            http://localhost:{{ opencti_web_port }}
+          
+          🔑 Default Credentials:
+          ───────────────────────────────────────────────────────────────
+          TheHive:  {{ thehive_admin_email }} / {{ thehive_admin_password }}
+          OpenCTI:  {{ opencti_admin_email }} / {{ opencti_admin_password }}
+          Wazuh:    Check config/wazuh_dashboard/wazuh.yml
+          Shuffle:  Visit http://localhost:{{ shuffle_frontend_http_port }}/adminsetup
+          
+          📋 Post-Deployment Steps:
+          ───────────────────────────────────────────────────────────────
+          1. Shuffle: Navigate to /adminsetup to create admin account
+          2. Wazuh: Accept self-signed certificate warning
+          3. All services are on 'soc_net' network for inter-service communication
+          
+          🔍 Verify Network:
+          docker network inspect {{ soc_network_name }} | jq '.[0].Containers'
+      tags: always
