@@ -23,15 +23,33 @@
       - git
       - jq
       - iproute2
+      - net-tools
       - python3-pip
       - python3-docker
       - apt-transport-https
       - software-properties-common
     state: present
+    update_cache: true
   register: prereq_result
   retries: 3
   delay: 5
   until: prereq_result is succeeded
+
+- name: Install yq (mikefarah) if missing
+  ansible.builtin.shell: |
+    set -e
+    if command -v yq >/dev/null 2>&1; then exit 0; fi
+    arch="$(uname -m)"
+    case "$arch" in
+      x86_64|amd64) url="https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64" ;;
+      aarch64|arm64) url="https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_arm64" ;;
+      *) url="https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64" ;;
+    esac
+    curl -fsSL "$url" -o /usr/local/bin/yq
+    chmod +x /usr/local/bin/yq
+  args:
+    executable: /bin/bash
+  changed_when: true
 
 - name: Install Python docker SDK (required for docker_compose_v2)
   ansible.builtin.pip:

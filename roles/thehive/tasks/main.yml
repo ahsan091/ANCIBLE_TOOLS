@@ -152,6 +152,53 @@
   changed_when: true
   failed_when: false
 
+- name: Set GuardianEye timestamp (UTC, sortable)
+  ansible.builtin.set_fact:
+    ge_ts: "{{ ansible_date_time.iso8601_basic }}Z"
+
+- name: Ensure GuardianEye log directory exists
+  ansible.builtin.file:
+    path: /var/log/guardianeye
+    state: directory
+    mode: "0755"
+
+- name: Remove thehive ports key safely (prevents host 9000 publish)
+  ansible.builtin.shell: |
+    set -e
+    cd "{{ thehive_profile_dir }}"
+    yq -i 'del(.services.thehive.ports)' docker-compose.yml
+  args:
+    executable: /bin/bash
+  register: thehive_ports_del
+  changed_when: thehive_ports_del.rc == 0
+
+- name: Render final merged TheHive config (truth) and store artifact
+  ansible.builtin.shell: |
+    set -e
+    cd "{{ thehive_profile_dir }}"
+    docker compose -f docker-compose.yml -f docker-compose.override.yml config \
+      > "/var/log/guardianeye/thehive.merged.{{ ge_ts }}.yml"
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Check if TheHive final merged config publishes host port 9000
+  ansible.builtin.shell: |
+    set -e
+    f="/var/log/guardianeye/thehive.merged.{{ ge_ts }}.yml"
+    # Fail if any host publish contains 9000:
+    grep -Eq '(^|[^0-9])9000:[0-9]+' "$f" && exit 2 || exit 0
+  args:
+    executable: /bin/bash
+  register: thehive_bad_port
+  changed_when: false
+  failed_when: false
+
+- name: Fail with artifact path (TheHive publishes 9000)
+  ansible.builtin.fail:
+    msg: "TheHive still publishes host port 9000. Inspect: /var/log/guardianeye/thehive.merged.{{ ge_ts }}.yml"
+  when: thehive_bad_port.rc is defined and thehive_bad_port.rc != 0
+
 - name: Deploy TheHive stack
   community.docker.docker_compose_v2:
     project_src: "{{ thehive_profile_dir }}"
@@ -225,6 +272,23 @@
   delay: "{{ health_check_delay }}"
   until: thehive_health.status in [200, 302]
   ignore_errors: true
+
+- name: Runtime check — TheHive service must NOT bind host port 9000 (label-based)
+  ansible.builtin.shell: |
+    set -e
+    # If the service isn't running yet, do not false-positive; fail only if it binds 9000
+    out="$(docker ps --filter "label=com.docker.compose.service=thehive" --format '{{.Ports}}' || true)"
+    echo "$out" | grep -q ':9000->' && exit 2 || exit 0
+  args:
+    executable: /bin/bash
+  register: thehive_runtime_port_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail if TheHive binds host port 9000 at runtime
+  ansible.builtin.fail:
+    msg: "TheHive container is binding host port 9000 at runtime. This should not happen."
+  when: thehive_runtime_port_check.rc is defined and thehive_runtime_port_check.rc != 0
 
 - name: Display TheHive deployment status
   ansible.builtin.debug:

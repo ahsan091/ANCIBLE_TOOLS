@@ -71,6 +71,52 @@
     msg: "Wazuh indexer will use port {{ wazuh_indexer_port }} (configured in group_vars)"
   when: wazuh_indexer_port is defined
 
+- name: Set GuardianEye timestamp (UTC, sortable)
+  ansible.builtin.set_fact:
+    ge_ts: "{{ ansible_date_time.iso8601_basic }}Z"
+
+- name: Ensure GuardianEye log directory exists
+  ansible.builtin.file:
+    path: /var/log/guardianeye
+    state: directory
+    mode: "0755"
+
+- name: Remove wazuh.indexer ports key safely (prevents host 9200 publish)
+  ansible.builtin.shell: |
+    set -e
+    cd "{{ wazuh_singlenode_dir }}"
+    yq -i 'del(.services["wazuh.indexer"].ports)' docker-compose.yml
+  args:
+    executable: /bin/bash
+  register: wazuh_ports_del
+  changed_when: wazuh_ports_del.rc == 0
+
+- name: Render final merged Wazuh config (truth) and store artifact
+  ansible.builtin.shell: |
+    set -e
+    cd "{{ wazuh_singlenode_dir }}"
+    sudo docker compose -f docker-compose.yml -f docker-compose.override.yml config \
+      > "/var/log/guardianeye/wazuh.merged.{{ ge_ts }}.yml"
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Check if Wazuh final merged config publishes host port 9200
+  ansible.builtin.shell: |
+    set -e
+    f="/var/log/guardianeye/wazuh.merged.{{ ge_ts }}.yml"
+    grep -Eq '(^|[^0-9])9200:[0-9]+' "$f" && exit 2 || exit 0
+  args:
+    executable: /bin/bash
+  register: wazuh_bad_port
+  changed_when: false
+  failed_when: false
+
+- name: Fail with artifact path (Wazuh publishes 9200)
+  ansible.builtin.fail:
+    msg: "Wazuh indexer still publishes host port 9200. Inspect: /var/log/guardianeye/wazuh.merged.{{ ge_ts }}.yml"
+  when: wazuh_bad_port.rc is defined and wazuh_bad_port.rc != 0
+
 - name: Deploy Wazuh stack
   community.docker.docker_compose_v2:
     project_src: "{{ wazuh_singlenode_dir }}"
@@ -116,6 +162,22 @@
   when: wazuh_dashboard_config is succeeded
   ignore_errors: true
 
+- name: Runtime check — Wazuh indexer must NOT bind host port 9200 (label-based)
+  ansible.builtin.shell: |
+    set -e
+    out="$(sudo docker ps --filter "label=com.docker.compose.service=wazuh.indexer" --format '{{.Ports}}' || true)"
+    echo "$out" | grep -q ':9200->' && exit 2 || exit 0
+  args:
+    executable: /bin/bash
+  register: wazuh_runtime_port_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail if Wazuh indexer binds host port 9200 at runtime
+  ansible.builtin.fail:
+    msg: "Wazuh indexer container is binding host port 9200 at runtime. This should not happen."
+  when: wazuh_runtime_port_check.rc is defined and wazuh_runtime_port_check.rc != 0
+
 - name: Display Wazuh deployment status
   ansible.builtin.debug:
     msg: |
@@ -123,7 +185,7 @@
       📍 Directory: {{ wazuh_singlenode_dir }}
       🔒 Dashboard: https://localhost:{{ wazuh_dashboard_port }}
       🔌 API: https://localhost:{{ wazuh_api_port }}
-      📊 Indexer: https://localhost:{{ wazuh_indexer_port }}
+      📊 Indexer: Internal only (via soc_net, not published)
       👤 User: {{ wazuh_api_user }}
       🔑 Password: Check {{ wazuh_singlenode_dir }}/config/wazuh_dashboard/wazuh.yml
       

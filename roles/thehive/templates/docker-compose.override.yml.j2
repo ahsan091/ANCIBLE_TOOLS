@@ -15,8 +15,11 @@ services:
     # Remove port mapping from base docker-compose.yml (port 9000 conflicts with OpenCTI MinIO)
     # TheHive is accessed via nginx reverse proxy on ports 8443 (HTTPS) and 9002 (HTTP)
     # Explicitly set ports to empty list to override base docker-compose.yml port mappings
-    # Note: Docker Compose v2 should respect this, but if base file has ports, they may still be applied
+    # The base file's port 9000 mapping is removed by Ansible task before deployment
+    # This override ensures no ports are exposed even if base file has them
     ports: []
+    # Explicitly set to ensure no port conflicts
+    expose: []
     networks:
       - default
       - {{ soc_network_name }}

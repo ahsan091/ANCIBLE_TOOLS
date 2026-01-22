@@ -7,8 +7,9 @@
 - name: Check if Docker is already installed
   ansible.builtin.command: docker --version
   register: docker_check
-  ignore_errors: true
+  failed_when: false
   changed_when: false
+  # This will fail on fresh systems (expected), but we handle it gracefully
 
 - name: Remove old Docker packages
   ansible.builtin.apt:

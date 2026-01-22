@@ -1,0 +1,31 @@
+# Verification and documentation files (exclude from repository)
+CORRECTED_FIXES.md
+DEPLOYMENT_ANALYSIS.md
+ENTERPRISE_APPROACH.md
+ERROR_ANALYSIS.md
+FINAL_IMPLEMENTATION.md
+FIXES_APPLIED.md
+PROBLEMS_AND_FIXES.md
+VALIDATION_PLAN.md
+
+# Verification scripts (if any)
+*.verification.sh
+*_verify.sh
+*_test.sh
+
+# Log files
+*.log
+/var/log/guardianeye/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Ansible retry files
+*.retry
