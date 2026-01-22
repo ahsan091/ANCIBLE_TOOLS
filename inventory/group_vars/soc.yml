@@ -39,7 +39,7 @@ opencti_git_ref: "2d9978fe327864c6e04bf9f6d4884054697e71a7"         # OpenCTI re
 # Wazuh Configuration
 # ----------------------------------------------------------------------------
 # Git ref is defined above in "Pinned Git Refs" section
-wazuh_dashboard_port: 443
+wazuh_dashboard_port: 8444  # Changed from 443 to avoid port conflict
 wazuh_api_port: 55000
 wazuh_indexer_port: 9203  # Changed from 9200 to avoid conflict with OpenCTI MinIO
 

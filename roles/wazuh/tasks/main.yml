@@ -88,8 +88,18 @@
     yq -i 'del(.services["wazuh.indexer"].ports)' docker-compose.yml
   args:
     executable: /bin/bash
-  register: wazuh_ports_del
-  changed_when: wazuh_ports_del.rc == 0
+  register: wazuh_indexer_ports_del
+  changed_when: wazuh_indexer_ports_del.rc == 0
+
+- name: Remove wazuh.dashboard ports key safely (prevents host 443 publish)
+  ansible.builtin.shell: |
+    set -e
+    cd "{{ wazuh_singlenode_dir }}"
+    yq -i 'del(.services["wazuh.dashboard"].ports)' docker-compose.yml
+  args:
+    executable: /bin/bash
+  register: wazuh_dashboard_ports_del
+  changed_when: wazuh_dashboard_ports_del.rc == 0
 
 - name: Render final merged Wazuh config (truth) and store artifact
   ansible.builtin.shell: |
@@ -164,9 +174,11 @@
 
 - name: Runtime check — Wazuh indexer must NOT bind host port 9200 (label-based)
   ansible.builtin.shell: |
-    set -e
-    out="$(sudo docker ps --filter "label=com.docker.compose.service=wazuh.indexer" --format '{{.Ports}}' || true)"
-    echo "$out" | grep -q ':9200->' && exit 2 || exit 0
+    set -euo pipefail
+    out="$(docker ps --filter 'label=com.docker.compose.service=wazuh.indexer' --format json || true)"
+    # If nothing returned, treat as OK (service may be starting)
+    if [ -z "$out" ]; then exit 0; fi
+    echo "$out" | jq -r '.Ports // ""' | grep -q ':9200->' && exit 2 || exit 0
   args:
     executable: /bin/bash
   register: wazuh_runtime_port_check

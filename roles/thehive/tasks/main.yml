@@ -275,10 +275,11 @@
 
 - name: Runtime check — TheHive service must NOT bind host port 9000 (label-based)
   ansible.builtin.shell: |
-    set -e
-    # If the service isn't running yet, do not false-positive; fail only if it binds 9000
-    out="$(docker ps --filter "label=com.docker.compose.service=thehive" --format '{{.Ports}}' || true)"
-    echo "$out" | grep -q ':9000->' && exit 2 || exit 0
+    set -euo pipefail
+    out="$(docker ps --filter 'label=com.docker.compose.service=thehive' --format json || true)"
+    # If nothing returned, treat as OK (service may be starting)
+    if [ -z "$out" ]; then exit 0; fi
+    echo "$out" | jq -r '.Ports // ""' | grep -q ':9000->' && exit 2 || exit 0
   args:
     executable: /bin/bash
   register: thehive_runtime_port_check

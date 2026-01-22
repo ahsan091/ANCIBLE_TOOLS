@@ -16,6 +16,8 @@ services:
       - {{ soc_network_name }}
 
   wazuh.dashboard:
+    ports:
+      - "{{ wazuh_dashboard_port }}:443"
     networks:
       - default
       - {{ soc_network_name }}
