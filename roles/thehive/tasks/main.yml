@@ -172,6 +172,16 @@
   register: thehive_ports_del
   changed_when: thehive_ports_del.rc == 0
 
+- name: Remove nginx ports key safely (prevents host default ports publish)
+  ansible.builtin.shell: |
+    set -e
+    cd "{{ thehive_profile_dir }}"
+    yq -i 'del(.services.nginx.ports)' docker-compose.yml
+  args:
+    executable: /bin/bash
+  register: nginx_ports_del
+  changed_when: nginx_ports_del.rc == 0
+
 - name: Render final merged TheHive config (truth) and store artifact
   ansible.builtin.shell: |
     set -e

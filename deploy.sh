@@ -287,6 +287,19 @@ run_ansible_playbook() {
 # Summary
 # ─────────────────────────────────────────────────────────────────────────────
 print_success() {
+    # Extract ports from source of truth
+    local wazuh_port
+    wazuh_port=$(grep "^wazuh_dashboard_port:" "$SCRIPT_DIR/group_vars/soc.yml" | awk '{print $2}' | tr -d ' "')
+    local thehive_port
+    thehive_port=$(grep "^thehive_https_port:" "$SCRIPT_DIR/group_vars/soc.yml" | awk '{print $2}' | tr -d ' "')
+    local shuffle_port
+    shuffle_port=$(grep "^shuffle_frontend_http_port:" "$SCRIPT_DIR/group_vars/soc.yml" | awk '{print $2}' | tr -d ' "')
+    # OpenCTI ID might be dynamic or static, try to grab static first. Note: OPENCTI_WEB_PORT global might be set.
+    local opencti_port="${OPENCTI_WEB_PORT:-}"
+    if [[ -z "$opencti_port" ]]; then
+       opencti_port=$(grep "^opencti_web_port:" "$SCRIPT_DIR/group_vars/soc.yml" | awk '{print $2}' | tr -d ' "')
+    fi
+
     echo ""
     echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║              DEPLOYMENT COMPLETED SUCCESSFULLY               ║${NC}"
@@ -295,12 +308,12 @@ print_success() {
     echo -e "📋 Audit log: ${YELLOW}$LOG_FILE${NC}"
     echo ""
     echo -e "🌐 Access URLs:"
-    echo -e "   Wazuh Dashboard:  ${BLUE}https://localhost:443${NC}"
-    echo -e "   TheHive:          ${BLUE}https://localhost:8443${NC}"
-    echo -e "   Shuffle:          ${BLUE}http://localhost:3001${NC}"
-    echo -e "   OpenCTI:          ${BLUE}http://localhost:${OPENCTI_WEB_PORT:-8090}${NC}"
+    echo -e "   Wazuh Dashboard:  ${BLUE}https://localhost:${wazuh_port:-8444}${NC}"
+    echo -e "   TheHive:          ${BLUE}https://localhost:${thehive_port:-8443}${NC}"
+    echo -e "   Shuffle:          ${BLUE}http://localhost:${shuffle_port:-3001}${NC}"
+    echo -e "   OpenCTI:          ${BLUE}http://localhost:${opencti_port:-8090}${NC}"
     echo ""
-    echo -e "⚠️  Post-deploy: Visit ${YELLOW}http://localhost:3001/adminsetup${NC} for Shuffle"
+    echo -e "⚠️  Post-deploy: Visit ${YELLOW}http://localhost:${shuffle_port:-3001}/adminsetup${NC} for Shuffle"
     echo ""
 }
 
